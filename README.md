@@ -17,6 +17,7 @@ TMLR's [Action Editor guidelines](https://jmlr.org/tmlr/ae-guide.html) state tha
 - **82.5%** of decisions exceed the 5-week (35-day) target
 - **95.7%** exceed the 4-week (28-day) reviewer recommendation window
 - The median has been stable at ~45 days since 2023
+- Rejection rate is flat at ~28% across all wait times — longer waits don't predict worse outcomes
 
 ## Usage
 
@@ -27,9 +28,10 @@ python tmlr_audit.py
 
 No API credentials required — all data is public. The script takes ~30 seconds to fetch all submissions and produces:
 
-- **Console output:** Summary statistics and compliance rates
+- **Console output:** Summary statistics, compliance rates, and rejection rates by wait time
 - **`images/tmlr_histogram.png`:** Distribution of decision times by week
 - **`images/tmlr_yearly.png`:** Median decision time by year
+- **`images/tmlr_rejection_by_wait.png`:** Rejection rate vs. decision wait time
 
 ## What the script does
 

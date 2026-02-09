@@ -17,6 +17,7 @@ for note in submissions:
     replies = note.details.get('replies', [])
     review_times = []
     decision_time = None
+    decision_content = None
 
     for reply in replies:
         invitations = reply.get('invitations', [])
@@ -30,17 +31,27 @@ for note in submissions:
             if '/Decision' in inv:
                 if decision_time is None or cdate < decision_time:
                     decision_time = cdate
+                    decision_content = reply.get('content', {})
                 break
 
     review_times_sorted = sorted(review_times)
     t_third_review = review_times_sorted[2] if len(review_times_sorted) >= 3 else None
+
+    # Extract decision recommendation
+    rec = ''
+    if decision_content:
+        rec = decision_content.get('recommendation', '')
+        if isinstance(rec, dict):
+            rec = rec.get('value', '')
+        rec = str(rec).lower()
 
     records.append({
         'id': note.id,
         'n_reviews': len(review_times),
         't_third_review': t_third_review,
         't_decision': decision_time,
-        'censored': decision_time is None
+        'censored': decision_time is None,
+        'recommendation': rec
     })
 
 df = pd.DataFrame(records)
@@ -155,3 +166,75 @@ print("\n=== Yearly Breakdown ===")
 for _, row in yearly.iterrows():
     print(f"  {int(row['decision_year'])}: median={row['median_days']:.1f} days, "
           f"IQR=[{row['p25']:.0f}, {row['p75']:.0f}], n={int(row['count'])}")
+
+# --- Figure 3: Rejection rate by wait time ---
+outcome = analysis[analysis['recommendation'] != ''].copy()
+outcome['rejected'] = outcome['recommendation'].str.contains('reject')
+outcome['accepted'] = outcome['recommendation'].str.contains('accept') & ~outcome['rejected']
+
+print(f"\n=== Decision Outcomes ===")
+print(f"Papers with outcome data: {len(outcome)}")
+for r in sorted(outcome['recommendation'].unique()):
+    print(f"  {r}: {(outcome['recommendation'] == r).sum()}")
+
+bins_rej = np.arange(0, outcome['gap_days'].max() + 5, 5)
+outcome['bin'] = pd.cut(outcome['gap_days'], bins=bins_rej)
+
+grouped = outcome.groupby('bin', observed=True).agg(
+    n=('rejected', 'size'),
+    n_rejected=('rejected', 'sum'),
+    n_accepted=('accepted', 'sum')
+).reset_index()
+grouped['rejection_rate'] = grouped['n_rejected'] / grouped['n']
+grouped['acceptance_rate'] = grouped['n_accepted'] / grouped['n']
+grouped['bin_mid'] = grouped['bin'].apply(lambda x: x.mid)
+
+# Filter to bins with meaningful sample size
+grouped = grouped[grouped['n'] >= 20]
+
+fig3, ax3_main = plt.subplots(figsize=(10, 6))
+
+# Bar chart for sample sizes
+ax3_twin = ax3_main.twinx()
+ax3_twin.bar(grouped['bin_mid'], grouped['n'], width=4, alpha=0.4, color='#cccccc', label='N per bin')
+ax3_twin.set_ylabel('N (submissions per 5-day bin)', color='gray')
+ax3_twin.tick_params(axis='y', labelcolor='gray')
+
+# Line plot for rejection rate
+ax3_main.plot(grouped['bin_mid'], grouped['rejection_rate'] * 100, 'o-', color='firebrick',
+              linewidth=2, markersize=5, label='Rejection rate', zorder=5)
+ax3_main.set_xlabel('Days from 3rd review to decision', fontsize=12)
+ax3_main.set_ylabel('Rejection rate (%)', color='firebrick', fontsize=12)
+ax3_main.tick_params(axis='y', labelcolor='firebrick')
+
+# Reference lines
+ax3_main.axvline(x=28, color='#27ae60', linestyle='--', linewidth=1.5, label='4-week reviewer deadline')
+ax3_main.axvline(x=35, color='#e67e22', linestyle='--', linewidth=1.5, label='5-week AE target')
+
+ax3_main.set_title('TMLR: Rejection Rate by Decision Wait Time (N = {:,})'.format(len(outcome)), fontsize=14)
+ax3_main.set_xlim(0, 105)
+ax3_main.set_ylim(0, 50)
+
+# Combined legend
+lines1, labels1 = ax3_main.get_legend_handles_labels()
+lines2, labels2 = ax3_twin.get_legend_handles_labels()
+ax3_main.legend(lines1 + lines2, labels1 + labels2, loc='upper right', fontsize=10)
+
+plt.tight_layout()
+plt.savefig('images/tmlr_rejection_by_wait.png', dpi=150)
+print("\nSaved images/tmlr_rejection_by_wait.png")
+
+# Print summary table by coarse bins
+print("\n=== Rejection Rate by Wait Time (Coarse) ===")
+coarse_bins = [(15, 35), (35, 55), (55, 75), (75, 100)]
+for lo, hi in coarse_bins:
+    mask = (outcome['gap_days'] > lo) & (outcome['gap_days'] <= hi)
+    subset = outcome[mask]
+    if len(subset) > 0:
+        rej_rate = subset['rejected'].mean() * 100
+        print(f"  {lo}–{hi} days: N={len(subset)}, rejection rate={rej_rate:.1f}%")
+
+print("\n=== Rejection Rate by Wait Time (5-day bins) ===")
+print(f"{'Bin':>14} {'N':>6} {'Rej%':>7} {'Acc%':>7}")
+for _, row in grouped.iterrows():
+    print(f"{str(row['bin']):>14} {row['n']:>6.0f} {row['rejection_rate']*100:>6.1f}% {row['acceptance_rate']*100:>6.1f}%")
